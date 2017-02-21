@@ -1,0 +1,27 @@
+#!/usr/bin/env ruby
+# Obtain arguments
+abort 'usage: mailmerge recipients.tsv message.txt' unless ARGV.length == 2
+recipientLines = File.read(ARGV[0]).split(/\s*[\r\n]+\s*/)
+messageTemplate = File.read(ARGV[1])
+
+# Parse recipients
+recipients = recipientLines.map{|l| l.split "\t"}
+
+# Create mails
+recipients.each do |recipient|
+  message = messageTemplate.gsub(/\{(\d+)\}/) {|field| recipient[$1.to_i] || ''}
+  subject = message[/^#.*/].sub(/#\s*/, '')
+  message[/^#.*[\n\r]*/] = ''
+
+  system 'osascript', '-e', %{
+    on run argv
+      tell application "Mail"
+        set msg to make new outgoing message with properties {subject:item 2 of argv, content:item 3 of argv, visible:true}
+
+        tell msg
+          make new to recipient with properties {address:item 1 of argv}
+        end tell
+      end tell
+    end run
+  }, recipient[0], subject, message
+end
