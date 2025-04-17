@@ -1,8 +1,9 @@
 #!/usr/bin/env ruby
 # Obtain arguments
-abort 'usage: mailmerge recipients.tsv message.txt' unless ARGV.length == 2
+abort 'usage: mailmerge recipients.tsv message.txt [sender@example.com]' unless ARGV.length.between?(2, 3)
 recipientLines = File.read(ARGV[0]).split(/\s*[\r\n]+\s*/)
 messageTemplate = File.read(ARGV[1])
+sender_email = ARGV[2]
 
 # Parse recipients
 recipients = recipientLines.map{|l| l.split "\t"}
@@ -10,18 +11,54 @@ recipients = recipientLines.map{|l| l.split "\t"}
 # Create mails
 recipients.each do |recipient|
   message = messageTemplate.gsub(/\{(\d+)\}/) {|field| recipient[$1.to_i] || ''}
+
+  # Extract subject line
   subject = message[/^#.*/].sub(/#\s*/, '')
   message[/^#.*[\n\r]*/] = ''
+
+  # Extract attachments from ![filepath] patterns
+  attachment_paths = message.scan(/!\[(.*?)\]/).flatten
+  message = message.gsub(/!\[.*?\]/, '')
+
+  # Construct AppleScript arguments
+  args = [recipient[0], subject, message]
+  args << sender_email if sender_email
+  args += attachment_paths
 
   system 'osascript', '-e', %{
     on run argv
       tell application "Mail"
-        set msg to make new outgoing message with properties {subject:item 2 of argv, content:item 3 of argv, visible:true}
+        set senderAddress to ""
+        set hasSender to false
+
+        -- Determine if sender is provided
+        if (count of argv) > 3 then
+          set maybeSender to item 4 of argv
+          if maybeSender contains "@" then
+            set hasSender to true
+            set senderAddress to maybeSender
+          end if
+        end if
+
+        set props to {subject:item 2 of argv, content:item 3 of argv, visible:true}
+        if hasSender then
+          set props to props & {sender:senderAddress}
+        end if
+        set msg to make new outgoing message with properties props
 
         tell msg
           make new to recipient with properties {address:item 1 of argv}
+
+          -- Add attachments if any
+          repeat with i from ((hasSender as integer) + 4) to (count of argv)
+            try
+              set attFile to POSIX file (item i of argv) as alias
+              make new attachment with properties {file name:attFile} at after the last paragraph
+            end try
+          end repeat
         end tell
       end tell
+      return ""
     end run
-  }, recipient[0], subject, message
+  }, *args
 end
